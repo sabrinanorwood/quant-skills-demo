@@ -1,0 +1,427 @@
+---
+title: "Quant demo for company B3"
+author: "Sabrina Norwood"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: hide
+    highlight: haddock
+    toc: yes
+    toc_float: yes
+---
+
+# Research Questions
+
+- How satisfied are people with the service?
+- If you want to improve overall satisfaction, what elements of the service would you focus on?
+- If you want to minimize dissatisfaction, where needs attention?
+
+```{r include=FALSE}
+
+# options
+## turn off scientific notation
+options(scipen=999)
+
+## chunk options
+knitr::opts_chunk$set(message = FALSE, 
+                      warning = FALSE)
+
+
+# dependencies
+
+library(tidyverse)
+library(readxl)
+#library(strengejacke)  # library(devtools); install_github("strengejacke/strengejacke")
+library(sjPlot)  # library(devtools); install_github("strengejacke/sjPlot")
+# library(knitr)
+# library(kableExtra)
+# library(psych)
+library(janitor)
+library(lemon)
+
+# get data
+data_cleaned <- read_xlsx("../data/raw/Use case datafile.xlsx") %>%
+  clean_names()
+  
+```
+
+# Descriptives
+
+```{r}
+
+data_summary_temp <- data_cleaned %>%
+  # "gather" a bunch of items into fewer columns
+  gather(item, response, c(overall_recommendation_score, website_score, brochures_score, call_center_score, personal_advisor_score, project_coordinator_score, technician_installer_score, timing_score, product_score, after_sales_service_score)) %>%
+  group_by(item) %>% # for each item...
+  count(response) %>% # ...create counts
+  mutate(percent = round(n/sum(n)*100, 0)) %>% # convert counts to percents, rounding to zero decimals
+  mutate(item = str_replace_all(item, "_", " "), 
+         item = str_remove(item, " score"),
+         item = str_to_title(item))
+
+```
+
+```{r fig.height=5, fig.width=6}
+
+p1 <- data_summary_temp %>%
+  filter(item != "Overall Recommendation") %>%
+  ggplot(aes(response, percent, fill = response)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ item) + # scales = "free_y" 
+  #lemon::facet_rep_wrap(~ item, repeat.tick.labels = "x") +
+  scale_fill_viridis_c(begin = 0.3, end = 0.7) +
+  #geom_vline(aes(xintercept = 5.5), linetype = "dashed")
+  ylab("Percent") +
+  xlab("Score") + 
+  scale_x_continuous(breaks = c(0, 2, 4, 6, 8, 10)) +  # how to label the axis ticks
+  # scale_x_continuous(breaks = c(1, 5, 9),
+  #                    labels = c("Unsatisfied", "Neutral", "Satisfied")) +
+  theme_bw() +
+  theme(strip.background = element_blank()) +
+  theme(legend.position = "none")
+
+p1
+
+ggsave(filename = "p1.pdf", 
+       plot = p1, 
+       device = "pdf",
+       height = 5,
+       width = 7,
+       units = "in")
+
+```
+
+```{r fig.height=4, fig.width=5}
+
+p2 <- data_summary_temp %>%
+  filter(item == "Overall Recommendation") %>%
+  ggplot(aes(response, percent, fill = response)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ item) + # scales = "free_y" 
+  scale_fill_viridis_c(begin = 0.3, end = 0.7) +
+  #geom_vline(aes(xintercept = 5.5), linetype = "dashed")
+  ylab("Percent") +
+  xlab("Score") + 
+  scale_x_continuous(breaks = c(0, 2, 4, 6, 8, 10)) +
+  theme_bw() +
+  theme(strip.background = element_blank()) +
+  theme(legend.position = "none")
+
+p2
+
+ggsave(filename = "p2.pdf", 
+       plot = p2, 
+       device = "pdf",
+       height = 3,
+       width = 4,
+       units = "in")
+
+```
+
+# Regression
+
+## multivariable - inappripriate and returns nonsense conclusions
+
+(included only to demonstrate this point)
+
+```{r}
+
+fit_1 <- lm(overall_recommendation_score ~ website_score + brochures_score + call_center_score + personal_advisor_score + project_coordinator_score + technician_installer_score + timing_score + product_score + after_sales_service_score, 
+            data = data_cleaned)
+
+plot_model(fit_1)
+
+```
+
+## multiple regression models
+
+which variables were collected in what order?
+
+### linear
+
+```{r}
+
+data_reshaped <- data_cleaned %>%
+  gather(predictor, response, c(website_score, brochures_score, call_center_score, personal_advisor_score, project_coordinator_score, technician_installer_score, timing_score, product_score, after_sales_service_score)) 
+
+results_linear <- data_reshaped %>%
+  group_by(predictor) %>%
+  #group_map(~ broom::tidy(lm(overall_recommendation_score ~ response, data = .x)))
+  do(broom::tidy(lm(overall_recommendation_score ~ response, data = .))) %>%
+  # for this analysis (but not all!) we discard the intercept
+  filter(term == "response") %>%
+  # calculate confidence intervals
+  mutate(ci_lower = estimate - std.error*1.96,
+         ci_upper = estimate + std.error*1.96,
+         sig = ifelse(p.value < .01, "sig", "nonsig"))
+
+# ggplot(results_linear, aes(forcats::fct_reorder(predictor, estimate), estimate, fill = sig)) +
+#   geom_bar(stat = "identity") +
+#   #geom_linerange(aes(ymin = ci_lower, ymax = ci_upper)) +
+#   coord_flip() +
+#   scale_fill_viridis_d(begin = 0.3, end = 0.7)
+
+p5 <- ggplot(results_linear, aes(forcats::fct_reorder(predictor, estimate), estimate, fill = estimate)) +
+  geom_bar(stat = "identity") +
+  #geom_linerange(aes(ymin = ci_lower, ymax = ci_upper)) +
+  coord_flip() +
+  scale_fill_viridis_c(begin = 0.3, end = 0.7) +
+  ylab("Expected impact on\nOverall Recommendation score") +
+  xlab("") +
+  scale_x_discrete(
+    labels = 
+      results_linear %>%
+      arrange(estimate) %>%
+      pull(predictor) %>%
+      str_replace_all("_", " ") %>%
+      str_remove(" score") %>%
+      str_to_title()
+  ) +
+  theme_bw() +
+  theme(strip.background = element_blank()) +
+  theme(legend.position = "none")
+
+p5
+
+ggsave(filename = "p5.pdf", 
+       plot = p5, 
+       device = "pdf",
+       height = 5,
+       width = 7,
+       units = "in")
+
+# ggplot(results_linear, aes(forcats::fct_reorder(predictor, estimate), estimate, color = sig)) +
+#   geom_point() +
+#   geom_linerange(aes(ymin = ci_lower, ymax = ci_upper)) +
+#   geom_hline(aes(yintercept = 0), linetype = "dashed") +
+#   coord_flip() +
+#   scale_color_viridis_d(begin = 0.3, end = 0.7)
+# 
+# results_linear %>%
+#   arrange(desc(estimate)) %>%
+#   select(predictor, estimate)
+
+```
+
+### ranks
+
+Linear regression might not be robust given skew. Do a robustness test too.
+
+```{r}
+
+results_rank <- data_reshaped %>%
+  group_by(predictor) %>%
+  mutate(overall_recommendation_score = rank(overall_recommendation_score),
+         response = rank(response)) %>%
+  #group_map(~ broom::tidy(lm(overall_recommendation_score ~ response, data = .x)))
+  do(broom::tidy(lm(overall_recommendation_score ~ response, data = .))) %>%
+  # for this analysis (but not all!) we discard the intercept
+  filter(term == "response") %>%
+  # calculate confidence intervals
+  mutate(ci_lower = estimate - std.error*1.96,
+         ci_upper = estimate + std.error*1.96,
+         sig = ifelse(p.value < .005, "sig", "nonsig"))
+
+ggplot(results_rank, aes(forcats::fct_reorder(predictor, estimate), estimate, fill = estimate)) +
+  geom_bar(stat = "identity") +
+  #geom_linerange(aes(ymin = ci_lower, ymax = ci_upper)) +
+  coord_flip() +
+  scale_fill_viridis_c(begin = 0.3, end = 0.7) +
+  ylab("Expected impact on\nOverall Recommendation\n(ranked customers)") +
+  xlab("") +
+  scale_x_discrete(
+    labels = 
+      results_rank %>%
+      arrange(estimate) %>%
+      pull(predictor) %>%
+      str_replace_all("_", " ") %>%
+      str_remove(" score") %>%
+      str_to_title()
+  ) +
+  theme_bw() +
+  theme(strip.background = element_blank()) +
+  theme(legend.position = "none") 
+
+# ggplot(results_rank, aes(forcats::fct_reorder(predictor, estimate), estimate, color = sig)) +
+#   geom_point() +
+#   geom_linerange(aes(ymin = ci_lower, ymax = ci_upper)) +
+#   geom_hline(aes(yintercept = 0), linetype = "dashed") +
+#   coord_flip() +
+#   scale_color_viridis_d(begin = 0.3, end = 0.7)
+
+```
+
+## Compare methods
+
+```{r}
+
+bind_rows(mutate(results_linear, method = "linear"), 
+          mutate(results_rank, method = "rank")) %>%
+  ggplot(aes(forcats::fct_reorder(predictor, estimate), estimate, fill = estimate, group = method)) +
+  geom_bar(stat = "identity", position = position_dodge(width = .9)) +
+  #geom_linerange(aes(ymin = ci_lower, ymax = ci_upper)) +
+  coord_flip() +
+  scale_fill_viridis_c(begin = 0.3, end = 0.7)
+
+```
+
+```{r}
+
+p3 <- data_reshaped %>%
+  mutate(predictor = str_replace_all(predictor, "_", " "),
+         predictor = str_remove(predictor, " score"),
+         predictor = str_to_title(predictor),
+         highlight = ifelse(response >= 5 | is.na(response), "normal", "highlight")) %>%
+  ggplot(aes(response, overall_recommendation_score)) +
+  ylab("Overall Recommendation") +
+  xlab("Response") +
+  theme(legend.position = "none") +
+  geom_jitter(aes(color = highlight), alpha = 0.5) +
+  scale_color_manual(values = c("highlight" = "#440154", "normal" = "#44bf70")) +
+  geom_smooth(method = "lm", se = FALSE, colour = "darkgrey", size = 0.75) +
+  scale_x_continuous(breaks = c(0, 2, 4, 6, 8, 10)) +
+  scale_y_continuous(breaks = c(0, 2, 4, 6, 8, 10)) +
+  coord_cartesian(xlim = c(-0.5, 10.5), ylim = c(-0.5, 10.5)) +
+  theme_bw() +
+  theme(strip.background = element_blank()) +
+  theme(legend.position = "none") +
+  facet_wrap(~ predictor)
+  #lemon::facet_rep_wrap(~ predictor, repeat.tick.labels = TRUE)
+
+p3
+
+ggsave(filename = "p3.pdf", 
+       plot = p3, 
+       device = "pdf",
+       height = 7,
+       width = 7,
+       units = "in")
+
+```
+
+```{r}
+
+data_reshaped_negative_experience <- data_reshaped %>%
+  mutate(negative_experience = ifelse(response <= 5, TRUE, FALSE)) %>%
+  group_by(predictor) %>%
+  summarize(percent_negative_experience = sum(negative_experience, na.rm = TRUE)/n())
+
+p4 <- ggplot(data_reshaped_negative_experience, aes(forcats::fct_reorder(predictor, percent_negative_experience), percent_negative_experience, fill = percent_negative_experience)) +
+  geom_bar(stat = "identity") +
+  #geom_linerange(aes(ymin = ci_lower, ymax = ci_upper)) +
+  coord_flip() +
+  scale_fill_viridis_c(begin = 0.3, end = 0.7, direction = -1) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  ylab("Customers with a\nneutral or negative experience") +
+  xlab("") +
+  scale_x_discrete(
+    labels = 
+      data_reshaped_negative_experience %>%
+      arrange(percent_negative_experience) %>%
+      pull(predictor) %>%
+      str_replace_all("_", " ") %>%
+      str_remove(" score") %>%
+      str_to_title()
+  ) +
+  theme_bw() +
+  theme(strip.background = element_blank()) +
+  theme(legend.position = "none")
+
+p4
+
+ggsave(filename = "p4.pdf", 
+       plot = p4, 
+       device = "pdf",
+       height = 5,
+       width = 7,
+       units = "in")
+
+```
+
+```{r}
+
+data_reshaped_type_experience <- data_reshaped %>%
+  mutate(type_experience = case_when(response < 5 ~ "Negative", 
+                                     response == 5 ~ "Neutral", 
+                                     response > 5 ~ "Positive")) %>%
+  count(predictor, type_experience) %>%
+  drop_na() %>%
+  group_by(predictor) %>%
+  mutate(percent = n/sum(n))
+
+ggplot(data_reshaped_type_experience, aes(predictor, percent, fill = type_experience)) +
+  geom_bar(position = "stack", stat = "identity") +
+  #geom_linerange(aes(ymin = ci_lower, ymax = ci_upper)) +
+  coord_flip() +
+  scale_fill_viridis_d(begin = 0.3, end = 0.7, direction = -1) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  #ylab("Customers with a\nnegative experience") +
+  # xlab("") +
+  # scale_x_discrete(
+  #   labels = 
+  #     data_reshaped_negative_experience %>%
+  #     arrange(percent_negative_experience) %>%
+  #     pull(predictor) %>%
+  #     str_replace_all("_", " ") %>%
+  #     str_remove(" score") %>%
+  #     str_to_title()
+  # ) +
+  theme_bw() +
+  theme(strip.background = element_blank()) 
+  #theme(legend.position = "none")
+
+```
+
+```{r}
+
+data_reshaped_type_experience <- data_reshaped %>%
+  count(predictor, response) %>%
+  drop_na() %>%
+  group_by(predictor) %>%
+  mutate(percent = n/sum(n))
+
+ggplot(data_reshaped_type_experience, aes(predictor, percent, fill = response)) +
+  geom_bar(position = "stack", stat = "identity") +
+  #geom_linerange(aes(ymin = ci_lower, ymax = ci_upper)) +
+  coord_flip() +
+  scale_fill_viridis_c(begin = 0.1, end = 0.9, option = "magma") +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  #ylab("Customers with a\nnegative experience") +
+  # xlab("") +
+  # scale_x_discrete(
+  #   labels = 
+  #     data_reshaped_negative_experience %>%
+  #     arrange(percent_negative_experience) %>%
+  #     pull(predictor) %>%
+  #     str_replace_all("_", " ") %>%
+  #     str_remove(" score") %>%
+  #     str_to_title()
+  # ) +
+  theme_bw() +
+  theme(strip.background = element_blank()) 
+  #theme(legend.position = "none")
+
+```
+
+## correlations
+
+```{r}
+
+correlation_results <- data_cleaned %>%
+  select(-respondent_id) %>%
+  cor(use = "pairwise.complete.obs") %>%
+  round(2) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "predictor") %>%
+  filter(predictor != "overall_recommendation_score") %>%
+  select(predictor, correlation = overall_recommendation_score) %>%
+  arrange(desc(correlation)) 
+
+correlation_results
+
+```
+
+
+
+
+
